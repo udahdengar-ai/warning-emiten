@@ -1,0 +1,34 @@
+name: Harga harian
+
+on:
+  schedule:
+    - cron: "0 10 * * 1-5"   # 17.00 WIB, Senin-Jumat
+  workflow_dispatch: {}       # bisa dijalankan manual dari tab Actions
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data
+  cancel-in-progress: false
+
+jobs:
+  harga:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Hitung harga, volume, dan label
+        run: python3 scripts/build.py
+      - name: Simpan hasil
+        run: |
+          git config user.name "robot-harga"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/sinyal.json data/harga.json data/riwayat.json data/judul.json
+          if git diff --cached --quiet; then echo "Tidak ada perubahan"; exit 0; fi
+          git commit -m "Data harga $(TZ=Asia/Jakarta date +%Y-%m-%d)"
+          for i in 1 2 3; do git pull --rebase && git push && exit 0; sleep 5; done
+          exit 1

@@ -1,0 +1,4 @@
+{
+  "catatan": "Daftar emiten yang dipantau. Tambah atau hapus kode di sini (huruf besar, tanpa .JK). Rata-rata beli TIDAK ditulis di sini; rata-rata beli ada di rahasia.json yang dikunci PIN.",
+  "kode": ["ANTM","BEST","DEWA","DMAS","DSSA","ELSA","ISSP","KIJA","NRCA","POWR","PWON","RAJA","SSIA","VICI","NCKL"]
+}
