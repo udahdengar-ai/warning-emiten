@@ -19,7 +19,9 @@ Aturan (sama dengan dashboard lama):
          batas gagal          = harga terendah 60 hari sebelum hari terakhir; "dekat" = dalam 3%.
 """
 import json, os, time, datetime, statistics as st, urllib.request, urllib.parse
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET, re, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from aturan import fraksi, batas_ar
 from email.utils import parsedate_to_datetime
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
@@ -47,7 +49,6 @@ def umur(t):
 def pakai(x): return bool(x.get("berlaku")) or umur(x.get("tanggal", "")) <= (90 if x.get("dampak") == "Bahaya" else 30)
 BERITA = [x for x in news.get("berita", []) if pakai(x)]
 
-def fraksi(v): return 1 if v < 200 else 2 if v < 500 else 5 if v < 2000 else 10 if v < 5000 else 25
 def bulat(v): t = fraksi(v); return int(round(v / t) * t)
 def rp(x): return "Rp" + f"{x:,.0f}".replace(",", ".")
 def d1(x): return f"{x:.1f}".replace(".", ",")
@@ -57,7 +58,7 @@ def ambil(simbol):
     for host in ("query1", "query2"):
         for coba in range(3):
             try:
-                url = f"https://{host}.finance.yahoo.com/v8/finance/chart/{simbol}?range=1y&interval=1d"
+                url = f"https://{host}.finance.yahoo.com/v8/finance/chart/{simbol}?range=1y&interval=1d&events=div,split"
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
                 res = json.load(urllib.request.urlopen(req, timeout=30))["chart"]["result"][0]
                 q = res["indicators"]["quote"][0]
@@ -71,11 +72,11 @@ def ambil(simbol):
                 err = e; time.sleep(2 + coba * 3)
     raise err
 
-def teknikal(c, v, i):
+def teknikal(c, v, i, ref=None):
     last = c[i]
     ma20, ma50, pma20, pma50 = st.mean(c[i-19:i+1]), st.mean(c[i-49:i+1]), st.mean(c[i-20:i]), st.mean(c[i-50:i])
     avg20 = st.mean(v[i-20:i]); vr = v[i] / avg20 if avg20 else 0
-    ch1 = (c[i] / c[i-1] - 1) * 100; ch5 = (c[i] / c[i-5] - 1) * 100
+    ch1 = (c[i] / (ref[i] if ref else c[i-1]) - 1) * 100; ch5 = (c[i] / c[i-5] - 1) * 100
     lo, hi = min(c[i-59:i+1]), max(c[i-59:i+1])
     pola, lt = [], 0
     def add(t, lv):
@@ -111,20 +112,40 @@ for k in KODE:
         res, r = ambil(k + ".JK")
     except Exception as e:
         gagal.append(f"{k}: {e}")
-        if k in prev: sig.append(prev[k])          # pakai data lama supaya emiten tidak hilang
+        if k in prev: sig.append(dict(prev[k], basi=True))   # pakai data lama, ditandai basi
         continue
     if len(r) < 66:
         gagal.append(f"{k}: data kurang dari 66 hari"); continue
     tg = [x[0] for x in r]; c = [x[1] for x in r]; v = [x[2] for x in r]; h = [x[3] for x in r]; l = [x[4] for x in r]
     last = c[-1]; n = len(c)
-    lt, pola, a = teknikal(c, v, n - 1)
+    # dividen: pada tanggal ex, harga acuan = penutupan kemarin dikurangi dividen (supaya turun karena dividen tidak dibaca sebagai sinyal)
+    WIBz = datetime.timezone(datetime.timedelta(hours=7))
+    div = {datetime.datetime.fromtimestamp(int(t), WIBz).strftime("%Y-%m-%d"): float(d.get("amount", 0))
+           for t, d in (res.get("events", {}).get("dividends") or {}).items()}
+    ref = [None] + [c[i-1] - div.get(tg[i], 0) for i in range(1, n)]
+    aksi = [dict(jenis="Ex-dividen", tanggal=t, nilai=round(a0, 2)) for t, a0 in sorted(div.items()) if umur(t) <= 30]
+    lt, pola, a = teknikal(c, v, n - 1, ref)
+    # auto rejection: tutup di ARB / ARA (acuan = penutupan kemarin)
+    ara, arb = batas_ar(c[-2], tg[-1])
+    ara_b, arb_b = batas_ar(c[-1], today if today > tg[-1] else tg[-1])
+    hari_arb = 0
+    for j in range(n - 1, 0, -1):
+        if c[j] <= batas_ar(c[j-1], tg[j])[1]: hari_arb += 1
+        else: break
+    batas = "ARB" if c[-1] <= arb else "ARA" if c[-1] >= ara else ""
+    if batas == "ARB":
+        pola.insert(0, "Tutup di ARB" + (f" ({hari_arb} hari berturut-turut)" if hari_arb > 1 else "")); lt = 3
+    elif batas == "ARA":
+        pola.insert(0, "Tutup di ARA"); lt = max(lt, 1)
+    if tg[-1] in div:
+        pola.append(f"Ex-dividen Rp{d1(div[tg[-1]])} hari ini (penurunan karena dividen sudah dihitung)")
     ma50 = a["ma50"]
     base = st.mean(v[-25:-5]); tr = st.mean(v[-5:]) / base if base else 1
     ch20 = (c[-1] / c[-21] - 1) * 100
     # rapor spike 1 tahun: hari yang sempat >=3% dari penutupan kemarin, lalu ditutup bertahan / setengah / pudar
     rs = {"naik": [0, 0, 0, 0], "turun": [0, 0, 0, 0]}
     for i in range(1, n):
-        pc0 = c[i-1]; t0 = 2 * fraksi(pc0)
+        pc0 = ref[i]; t0 = 2 * fraksi(pc0)
         for arah, ujung, tanda in (("naik", h[i], 1), ("turun", l[i], -1)):
             if tanda * (ujung / pc0 - 1) * 100 >= 3 and abs(ujung - pc0) >= t0:
                 akhir = tanda * (c[i] / pc0 - 1) * 100
@@ -188,12 +209,13 @@ for k in KODE:
         status_volume="Melonjak" if a["vr"] >= 2 else "Sepi" if a["vr"] <= 0.5 else "Normal",
         tren_volume="Meningkat" if tr >= 1.3 else "Menurun" if tr <= 0.7 else "Stabil",
         vs_ihsg_20h=v20, kekuatan=kuat, narasi=news.get("narasi", {}).get(k, ""),
-        perubahan=ubah, _seb=seb_ringkas, rapor_spike=rs))
+        perubahan=ubah, _seb=seb_ringkas, rapor_spike=rs,
+        batas=batas, ara=ara, arb=arb, ara_besok=ara_b, arb_besok=arb_b, hari_arb=hari_arb if batas == "ARB" else 0, aksi=aksi))
     hist += [[k, x[0], x[1], x[2]] for x in r[-60:]]
     # riwayat sinyal grafik (dihitung ulang dari 1 tahun) untuk rapor sinyal
-    sblm = teknikal(c, v, 60)[:2] if n > 61 else (0, [])
+    sblm = teknikal(c, v, 60, ref)[:2] if n > 61 else (0, [])
     for i in range(61, n):
-        li, pi, _ = teknikal(c, v, i)
+        li, pi, _ = teknikal(c, v, i, ref)
         if li >= 1 and (li != sblm[0] or pi != sblm[1]):
             riw[f"{k}-{tg[i]}"] = dict(id=f"{k}-{tg[i]}", kode=k, tanggal=tg[i], ke=NAMA[li], pemicu="; ".join(pi),
                                       harga=c[i], ubah_5h=maju(c, i, 5), ubah_20h=maju(c, i, 20))
@@ -206,9 +228,16 @@ sig.sort(key=lambda s: (-s.get("level", 0), URUT.get(s.get("label_pegang"), 5), 
 
 # judul berita harian (Google News RSS), tanpa ringkasan
 judul = []
+NAMA_PT = {s["kode"]: s.get("nama", "") for s in sig}
+def kata_nama(nm):
+    nm = re.sub(r"\b(PT|Tbk|Persero|\(Persero\))\b\.?", "", nm or "", flags=re.I).strip(" .,")
+    w = nm.split()
+    return " ".join(w[:2]) if len(w) >= 2 else nm
 for k in KODE:
     try:
-        q = urllib.parse.quote(f'"{k}" saham')
+        nm2 = kata_nama(NAMA_PT.get(k, ""))
+        cocok_nm = re.compile(re.escape(nm2), re.I) if len(nm2) >= 5 else None
+        q = urllib.parse.quote(f'"{k}" saham' + (f' OR "{nm2}"' if cocok_nm else ""))
         url = f"https://news.google.com/rss/search?q={q}+when:7d&hl=id&gl=ID&ceid=ID:id"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         root = ET.fromstring(urllib.request.urlopen(req, timeout=20).read())
@@ -217,6 +246,7 @@ for k in KODE:
             if src and t.endswith(" - " + src): t = t[: -len(src) - 3]
             try: tgl = parsedate_to_datetime(it.findtext("pubDate")).strftime("%Y-%m-%d")
             except Exception: tgl = ""
+            if not (re.search(r"\b" + k + r"\b", t) or (cocok_nm and cocok_nm.search(t))): continue
             judul.append(dict(kode=k, tanggal=tgl, judul=t, sumber=src, url=it.findtext("link") or ""))
             if sum(1 for j in judul if j["kode"] == k) >= 3: break
     except Exception as e:

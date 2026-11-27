@@ -2,7 +2,7 @@ name: Harga harian
 
 on:
   schedule:
-    - cron: "0 10 * * 1-5"   # 17.00 WIB, Senin-Jumat
+    - cron: "7 10 * * 1-5"   # 17.07 WIB, Senin-Jumat (menit :07 supaya tidak antre di menit :00)
   workflow_dispatch: {}       # bisa dijalankan manual dari tab Actions
 
 permissions:

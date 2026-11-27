@@ -2,9 +2,9 @@ name: Titik cek spike
 
 on:
   schedule:
-    - cron: "30 2 * * 1-5"   # 09.30 WIB  - Pembukaan
-    - cron: "0 7 * * 1-4"    # 14.00 WIB  - Setelah istirahat (Senin-Kamis)
-    - cron: "30 7 * * 5"     # 14.30 WIB  - Setelah istirahat (Jumat)
+    - cron: "33 2 * * 1-5"   # 09.33 WIB  - Pembukaan
+    - cron: "4 7 * * 1-4"    # 14.04 WIB  - Setelah istirahat (Senin-Kamis)
+    - cron: "34 7 * * 5"     # 14.34 WIB  - Setelah istirahat (Jumat)
   workflow_dispatch: {}
 
 permissions:

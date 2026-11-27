@@ -13,7 +13,9 @@ Status bertingkat sepanjang hari:
   Terkonfirmasi = spike yang sama masih di atas ambang pada titik berikutnya DAN volume >= 1,5x normal
   Pudar         = sempat spike (atau sempat menyentuh 3%) lalu kembali di bawah ambang
 """
-import json, os, time, datetime, urllib.request
+import json, os, sys, time, datetime, urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from aturan import fraksi, batas_ar
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 def p(n): return os.path.join(DATA, n)
@@ -30,14 +32,13 @@ now = datetime.datetime.now(WIB)
 KODE = baca("emiten.json", {}).get("kode", [])
 harian = baca("harga.json", {}).get("rows", [])
 
-def fraksi(v): return 1 if v < 200 else 2 if v < 500 else 5 if v < 2000 else 10 if v < 5000 else 25
 
 def ambil(simbol):
     err = None
     for host in ("query1", "query2"):
         for coba in range(3):
             try:
-                url = f"https://{host}.finance.yahoo.com/v8/finance/chart/{simbol}?range=1mo&interval=5m"
+                url = f"https://{host}.finance.yahoo.com/v8/finance/chart/{simbol}?range=1mo&interval=5m&events=div"
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
                 return json.load(urllib.request.urlopen(req, timeout=30))["chart"]["result"][0]
             except Exception as e:
@@ -64,17 +65,24 @@ def hitung(k, res):
         if r[0] == k and r[1] < tgl: tutup_kemarin = r[2]; break
     if tutup_kemarin is None and lalu: tutup_kemarin = hari[lalu[-1]][-1][4]
     if not tutup_kemarin: return None
+    ara, arb = batas_ar(tutup_kemarin, tgl)
+    div = 0.0
+    for t, d in ((res.get("events") or {}).get("dividends") or {}).items():
+        if datetime.datetime.fromtimestamp(int(t), WIB).strftime("%Y-%m-%d") == tgl: div = float(d.get("amount", 0))
+    acuan = tutup_kemarin - div                      # hari ex-dividen: turun sebesar dividen bukan spike
     buka = bars[0][1]; tinggi = max(b[2] for b in bars); rendah = min(b[3] for b in bars); harga = bars[-1][4]
     vol = sum(b[5] for b in bars)
     pemb = [sum(b[5] for b in hari[d] if b[0] <= jam) for d in lalu[-20:]]
     pemb = [x for x in pemb if x > 0]
     rv = round(vol / (sum(pemb) / len(pemb)), 2) if pemb else None
-    pc = lambda x: round((x / tutup_kemarin - 1) * 100, 2)
-    jauh = lambda x: abs(x - tutup_kemarin) >= 2 * fraksi(tutup_kemarin)
+    pc = lambda x: round((x / acuan - 1) * 100, 2)
+    jauh = lambda x: abs(x - acuan) >= 2 * fraksi(acuan)
     ubah, gap, naik, turun = pc(harga), pc(buka), pc(tinggi), pc(rendah)
     arah = "naik" if ubah >= AMBANG and jauh(harga) else "turun" if ubah <= -AMBANG and jauh(harga) else None
     sempat = "naik" if naik >= AMBANG and jauh(tinggi) else "turun" if turun <= -AMBANG and jauh(rendah) else None
-    return tgl, dict(jam_data=jam, tutup_kemarin=tutup_kemarin, buka=buka, harga=harga, tertinggi=tinggi, terendah=rendah,
+    batas = "ARB" if harga <= arb else "ARA" if harga >= ara else ""
+    sentuh = "ARB" if rendah <= arb else "ARA" if tinggi >= ara else ""
+    return tgl, dict(jam_data=jam, tutup_kemarin=tutup_kemarin, ara=ara, arb=arb, batas=batas, sentuh=sentuh, dividen=div, buka=buka, harga=harga, tertinggi=tinggi, terendah=rendah,
                      ubah=ubah, gap=gap, naik_maks=naik, turun_maks=turun, volume=vol, rasio_volume=rv, arah=arah, sempat=sempat)
 
 hasil, tgl_data, gagal = {}, None, []
@@ -100,13 +108,21 @@ simpan["titik"][titik] = {"nama": NAMA_TITIK[titik], "jam_data": jam_akhir, "dij
 def pct(x): return (f"+{x:.1f}" if x > 0 else f"{x:.1f}").replace(".", ",") + "%"
 status = {}
 for k in KODE:
-    aktif, st, cat = None, None, []
+    aktif, st, cat, batas_akhir = None, None, [], ""
     for t in URUT:
         r = simpan["titik"].get(t, {}).get("rows", {}).get(k)
         if not r: continue
         rv = r.get("rasio_volume")
         tv = f"volume {str(rv).replace('.', ',')}x normal" if rv is not None else "volume tidak ada data"
         nm = NAMA_TITIK[t]
+        if r.get("dividen"): cat.append(f"{nm}: ex-dividen Rp{str(round(r['dividen'], 2)).replace('.', ',')} (penurunan karena dividen tidak dihitung spike)")
+        if r.get("batas"):
+            aktif = "turun" if r["batas"] == "ARB" else "naik"; st = "Terkonfirmasi"; batas_akhir = r["batas"]
+            cat.append(f"{nm}: DI {r['batas']} Rp{r['arb' if r['batas'] == 'ARB' else 'ara']:,}".replace(",", ".") + f" ({pct(r['ubah'])}), {tv}")
+            continue
+        if r.get("sentuh"):
+            cat.append(f"{nm}: sempat menyentuh {r['sentuh']}, sekarang {pct(r['ubah'])}")
+        batas_akhir = ""
         if aktif is None:
             if r["arah"]:
                 aktif, st = r["arah"], "Muncul"
@@ -122,7 +138,7 @@ for k in KODE:
             else:
                 st = "Pudar"
                 cat.append(f"{nm}: kembali ke {pct(r['ubah'])}")
-    if st: status[k] = {"status": st, "arah": aktif, "catatan": cat}
+    if st: status[k] = {"status": st, "arah": aktif, "catatan": cat, "batas": batas_akhir}
 simpan["status"] = status
 simpan["diperbarui"] = now.strftime("%Y-%m-%d %H:%M WIB")
 with open(p("intraday.json"), "w", encoding="utf-8") as f: json.dump(simpan, f, ensure_ascii=False, separators=(",", ":"))

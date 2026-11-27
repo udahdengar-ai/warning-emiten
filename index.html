@@ -117,9 +117,25 @@ function beritaKode(k){ return (D.berita?.berita || []).filter(b => b.kode === k
 function kartu(x){
   return `<div class="card" onclick="detail('${x.kode}')"><div class="row">
     <span class="lampu ${x.lampu}"></span>
-    <div><div class="kode">${x.kode}</div><span class="label ${x.lampu}">${esc(x.label)}</span></div>
+    <div><div class="kode">${x.kode}</div><span class="label ${x.lampu}">${esc(x.label)}</span>${x.basi?` <span class="label">data lama</span>`:""}</div>
     <div class="kanan"><div><b>${rp(x.harga)}</b></div><div class="mute"><span class="${x.ubah_1h>=0?'naik':'turun'}">${pct(x.ubah_1h)}</span>${x.pegang?` · vs rata ${pct(x.pos)}`:""}</div></div>
   </div></div>`;
+}
+const LIBUR = ["2026-12-24","2026-12-25","2026-12-31","2027-01-01"];
+const wib = () => new Date(Date.now() + 7*36e5);
+const hariBursa = d => { const w = d.getUTCDay(); return w > 0 && w < 6 && !LIBUR.includes(d.toISOString().slice(0,10)); };
+function harusAdaTutup(){ // tanggal penutupan terakhir yang seharusnya sudah ada (robot 17.07 + jeda ±1 jam)
+  let d = wib(); const jam = d.getUTCHours() + d.getUTCMinutes()/60;
+  if (!(hariBursa(d) && jam >= 18.5)) { do { d = new Date(d - 864e5); } while (!hariBursa(d)); }
+  return d.toISOString().slice(0,10);
+}
+function catatanRobot(){
+  const d = wib(), jam = d.getUTCHours() + d.getUTCMinutes()/60, jumat = d.getUTCDay() === 5, I = D.intraday, hari = d.toISOString().slice(0,10);
+  if (!hariBursa(d)) return "";
+  const T = I && I.tanggal === hari ? I.titik || {} : {};
+  if (jam >= 10.75 && !T.pagi) return "Robot titik Pembukaan belum jalan (dijadwalkan 09.33).";
+  if (jam >= (jumat ? 15.75 : 15.25) && !T.siang) return `Robot titik Setelah istirahat belum jalan (dijadwalkan ${jumat ? "14.34" : "14.04"}).`;
+  return "";
 }
 const hariIniWIB = () => new Date(Date.now() + 7*36e5).toISOString().slice(0,10);
 function spikeHariIni(L){
@@ -130,7 +146,7 @@ function spikeHariIni(L){
     <div class="mute kecil" style="margin:4px">Data per ${T[akhir].jam_data.replace(":",".")} · robot jalan ${T[akhir].dijalankan.replace(":",".")} WIB · ambang 3%</div>`;
   const peg = k => (L.find(x => x.kode === k) || {}).pegang ? 1 : 0;
   const S = Object.entries(I.status || {}).map(([k,v]) => ({k, ...v})).sort((a,b) => ({Terkonfirmasi:0,Muncul:1,Pudar:2}[a.status] - {Terkonfirmasi:0,Muncul:1,Pudar:2}[b.status]) || peg(b.k) - peg(a.k));
-  const isi = S.length ? S.map(x => `<div class="card" onclick="detail('${x.k}')" style="${x.status==="Pudar"?"opacity:.7":""}"><div class="row"><span class="kode">${x.k}</span><span class="${x.arah==="naik"?"naik":"turun"}" style="font-weight:700">${x.arah==="naik"?"▲":"▼"}</span><span class="st st-${x.status}">${x.status}</span>${peg(x.k)?"":`<span class="mute kecil">pantauan</span>`}</div><ul class="ev">${x.catatan.map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>`).join("")
+  const isi = S.length ? S.map(x => `<div class="card" onclick="detail('${x.k}')" style="${x.status==="Pudar"?"opacity:.7":""}"><div class="row"><span class="kode">${x.k}</span><span class="${x.arah==="naik"?"naik":"turun"}" style="font-weight:700">${x.arah==="naik"?"▲":"▼"}</span><span class="st st-${x.status}">${x.status}</span>${x.batas?`<span class="st" style="background:${x.batas==="ARB"?"var(--merah)":"var(--hijau)"};color:#fff">${x.batas}</span>`:""}${peg(x.k)?"":`<span class="mute kecil">pantauan</span>`}</div><ul class="ev">${x.catatan.map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>`).join("")
     : `<div class="card mute">Belum ada spike ≥3% hari ini.</div>`;
   return `<h2>Spike hari ini</h2>${strip}${isi}`;
 }
@@ -141,6 +157,7 @@ function hariIni(L){
     if (x.ubah.length) it.push(...x.ubah);
     if (/jebol|Bahaya/.test(x.label)) it.push(x.label + ": " + x.cat);
     if (x.level_grafik >= 1 && x.pola) it.push("Grafik " + x.status_grafik + ": " + x.pola);
+    (x.aksi || []).filter(a => hariLalu(a.tanggal) <= 2).forEach(a => it.push(`${a.jenis} Rp${String(a.nilai).replace(".",",")} pada ${a.tanggal}: harga turun karena dividen, bukan sinyal`));
     if (x.status_volume === "Melonjak") it.push(`Volume melonjak (${x.rasio_volume.toString().replace(".",",")}x rata-rata 20 hari)`);
     brBaru.filter(b => b.kode === x.kode).forEach(b => it.push(`Berita ${b.dampak}: ${b.judul}`));
     return {x, it: [...new Set(it)]};
@@ -187,6 +204,7 @@ async function detail(k){
     <div class="grid">
       <div><small>Area tambah (lantai)</small><b>${rp(x.lantai)}</b></div><div><small>Area kurangi (atap)</small><b>${rp(x.atap)}</b></div>
       <div><small>Batas gagal</small><b>${rp(x.batas_gagal)}</b></div><div><small>Rata-rata beli</small><b>${x.pegang ? rp(x.rata) : "Belum dipegang"}</b></div>
+      <div><small>Batas bawah besok (ARB)</small><b>${rp(x.arb_besok)}</b></div><div><small>Batas atas besok (ARA)</small><b>${rp(x.ara_besok)}</b></div>
       <div><small>Posisi vs rata-rata</small><b class="${(x.pos||0)>=0?'naik':'turun'}">${x.pegang ? pct(x.pos) : "–"}</b></div><div><small>Dibanding IHSG (20 hari)</small><b>${esc(x.kekuatan)}</b></div>
     </div>
     ${x.ubah.length ? `<h2>Berubah sejak penutupan sebelumnya</h2><div class="card"><ul>${x.ubah.map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
@@ -196,6 +214,7 @@ async function detail(k){
       <div><b>Volume:</b> ${esc(x.status_volume)} (${String(x.rasio_volume).replace(".",",")}x rata-rata 20 hari), tren ${esc(x.tren_volume).toLowerCase()}</div>
       <div class="mute kecil" style="margin-top:4px">Harga 5 hari ${pct(x.ubah_5h)} · 20 hari ${pct(x.ubah_20h)} · MA20 ${rp(x.ma20)} · MA50 ${rp(x.ma50)}</div>
     </div>
+    ${(x.aksi||[]).length ? `<h2>Aksi korporasi (30 hari)</h2><div class="card">${x.aksi.map(a => `<div>${a.jenis} Rp${String(a.nilai).replace(".",",")} · ${a.tanggal}</div>`).join("")}<div class="mute kecil">Pada tanggal ex-dividen, penurunan sebesar dividen tidak dihitung sebagai sinyal.</div></div>` : ""}
     ${x.narasi ? `<h2>Narasi</h2><div class="card">${esc(x.narasi)}</div>` : ""}
     <h2>Berita</h2>${br.length ? br.map(b => `<div class="card"><div class="row"><span class="b-${b.dampak}">${b.dampak}</span><span class="kanan mute">${b.tanggal}</span></div><div>${esc(b.judul)}</div><div class="mute kecil">${esc(b.sumber)}${b.url?` · <a href="${esc(b.url)}" target="_blank" rel="noopener">buka</a>`:""}</div></div>`).join("") : `<div class="card mute">Tidak ada berita yang masih berlaku.</div>`}
     ${(() => { const I = D.intraday, st = I && I.tanggal === hariIniWIB() && I.status?.[x.kode]; return st ? `<h2>Spike hari ini</h2><div class="card"><div class="row"><span class="${st.arah==="naik"?"naik":"turun"}" style="font-weight:700">${st.arah==="naik"?"▲ naik":"▼ turun"}</span><span class="st st-${st.status}">${st.status}</span></div><ul class="ev">${st.catatan.map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>` : ""; })()}
@@ -261,11 +280,13 @@ function pindah(t){ TAB = t; simpan.set("tab", t); tampil(); window.scrollTo(0,0
 function tampil(){
   const L = (D.sinyal?.rows || []).map(olah);
   const m = D.sinyal?.meta || {};
-  const telat = m.tanggal_harga && hariLalu(m.tanggal_harga) > 4;
+  const telat = m.tanggal_harga && m.tanggal_harga < harusAdaTutup();
+  const basi = L.filter(x => x.basi).map(x => x.kode);
+  const cr = catatanRobot();
   const isi = TAB === "hari" ? hariIni(L) : TAB === "porto" ? porto(L) : tabBerita();
   const judul = {hari:"Hari Ini", porto:"Portofolio", berita:"Berita"}[TAB];
   $("#app").innerHTML = `<header><h1>${judul}<span class="sub">Penutupan ${esc(m.tanggal_harga || "–")}</span></h1><button class="ikon" onclick="muat()" title="Muat ulang">↻</button><button class="ikon" onclick="atur()" title="Pengaturan">⚙︎</button></header>
-    <main>${telat ? `<div class="peringatan">Data harga belum diperbarui sejak ${esc(m.tanggal_harga)}. Mungkin libur bursa atau robot GitHub gagal jalan.</div>` : ""}${isi}
+    <main>${telat ? `<div class="peringatan">⚠️ Data penutupan terakhir ${esc(m.tanggal_harga)}, seharusnya sudah ada ${harusAdaTutup()}. Robot GitHub mungkin gagal atau belum jalan; cek tab Actions di repo.</div>` : ""}${basi.length ? `<div class="peringatan">Data ${basi.join(", ")} gagal diambil di jalan terakhir; yang tampil data lama.</div>` : ""}${cr ? `<div class="peringatan">${cr}</div>` : ""}${isi}
     <div class="mute kecil" style="text-align:center;margin:18px 0">Alat pantau, bukan saran beli atau jual.</div></main>
     <nav>${[["hari","📍","Hari Ini"],["porto","📊","Portofolio"],["berita","📰","Berita"]].map(([t,i,n]) => `<button class="${TAB===t?"on":""}" onclick="pindah('${t}')"><b>${i}</b>${n}</button>`).join("")}</nav>
     <div id="lembar" class="lembar"></div><div id="atur" class="lembar"></div>`;
