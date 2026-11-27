@@ -23,11 +23,13 @@ jobs:
           python-version: "3.12"
       - name: Hitung harga, volume, dan label
         run: python3 scripts/build.py
+      - name: Titik cek penutupan (spike)
+        run: python3 scripts/intraday.py || echo "intraday gagal, lanjut"
       - name: Simpan hasil
         run: |
           git config user.name "robot-harga"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/sinyal.json data/harga.json data/riwayat.json data/judul.json
+          git add data/sinyal.json data/harga.json data/riwayat.json data/judul.json data/intraday.json
           if git diff --cached --quiet; then echo "Tidak ada perubahan"; exit 0; fi
           git commit -m "Data harga $(TZ=Asia/Jakarta date +%Y-%m-%d)"
           for i in 1 2 3; do git pull --rebase && git push && exit 0; sleep 5; done

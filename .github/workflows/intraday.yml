@@ -1,0 +1,36 @@
+name: Titik cek spike
+
+on:
+  schedule:
+    - cron: "30 2 * * 1-5"   # 09.30 WIB  - Pembukaan
+    - cron: "0 7 * * 1-4"    # 14.00 WIB  - Setelah istirahat (Senin-Kamis)
+    - cron: "30 7 * * 5"     # 14.30 WIB  - Setelah istirahat (Jumat)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data
+  cancel-in-progress: false
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Hitung spike
+        run: python3 scripts/intraday.py
+      - name: Simpan hasil
+        run: |
+          git config user.name "robot-harga"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/intraday.json
+          if git diff --cached --quiet; then echo "Tidak ada perubahan"; exit 0; fi
+          git commit -m "Spike $(TZ=Asia/Jakarta date '+%Y-%m-%d %H:%M')"
+          for i in 1 2 3; do git pull --rebase && git push && exit 0; sleep 5; done
+          exit 1

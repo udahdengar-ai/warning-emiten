@@ -121,6 +121,14 @@ for k in KODE:
     ma50 = a["ma50"]
     base = st.mean(v[-25:-5]); tr = st.mean(v[-5:]) / base if base else 1
     ch20 = (c[-1] / c[-21] - 1) * 100
+    # rapor spike 1 tahun: hari yang sempat >=3% dari penutupan kemarin, lalu ditutup bertahan / setengah / pudar
+    rs = {"naik": [0, 0, 0, 0], "turun": [0, 0, 0, 0]}
+    for i in range(1, n):
+        pc0 = c[i-1]; t0 = 2 * fraksi(pc0)
+        for arah, ujung, tanda in (("naik", h[i], 1), ("turun", l[i], -1)):
+            if tanda * (ujung / pc0 - 1) * 100 >= 3 and abs(ujung - pc0) >= t0:
+                akhir = tanda * (c[i] / pc0 - 1) * 100
+                x = rs[arah]; x[0] += 1; x[1 if akhir >= 3 else 3 if akhir <= 1.5 else 2] += 1
     mine = sorted([x for x in BERITA if x["kode"] == k], key=lambda x: x["tanggal"], reverse=True)
     lb = max([LV.get(x.get("dampak"), 0) for x in mine] + [0])
     pemicu = [x["judul"] for x in mine if LV.get(x.get("dampak"), 0) == lb and lb >= 2]
@@ -180,7 +188,7 @@ for k in KODE:
         status_volume="Melonjak" if a["vr"] >= 2 else "Sepi" if a["vr"] <= 0.5 else "Normal",
         tren_volume="Meningkat" if tr >= 1.3 else "Menurun" if tr <= 0.7 else "Stabil",
         vs_ihsg_20h=v20, kekuatan=kuat, narasi=news.get("narasi", {}).get(k, ""),
-        perubahan=ubah, _seb=seb_ringkas))
+        perubahan=ubah, _seb=seb_ringkas, rapor_spike=rs))
     hist += [[k, x[0], x[1], x[2]] for x in r[-60:]]
     # riwayat sinyal grafik (dihitung ulang dari 1 tahun) untuk rapor sinyal
     sblm = teknikal(c, v, 60)[:2] if n > 61 else (0, [])

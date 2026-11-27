@@ -58,6 +58,8 @@ input{font:inherit;padding:10px 12px;border-radius:12px;border:1px solid var(--l
 .pin input{text-align:center;font-size:24px;letter-spacing:.4em}
 .tabel{width:100%;border-collapse:collapse}.tabel td{padding:4px 2px}.tabel input{padding:8px}
 .kecil{font-size:12px}
+.st{font-size:12px;padding:2px 8px;border-radius:999px;font-weight:600}.st-Terkonfirmasi{background:var(--merah);color:#fff}.st-Muncul{background:var(--chip);color:var(--kuning)}.st-Pudar{background:var(--chip);color:var(--mute)}
+.titik{display:flex;gap:6px;margin:4px 4px 0;flex-wrap:wrap}.titik span{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--chip);color:var(--mute)}.titik span.on{color:var(--ink);font-weight:600}
 .peringatan{background:#fef3c7;color:#92400e;border-radius:12px;padding:8px 12px;font-size:13px;margin:8px 0}
 @media (prefers-color-scheme:dark){.peringatan{background:#3b2f0b;color:#fde68a}}
 </style>
@@ -119,6 +121,19 @@ function kartu(x){
     <div class="kanan"><div><b>${rp(x.harga)}</b></div><div class="mute"><span class="${x.ubah_1h>=0?'naik':'turun'}">${pct(x.ubah_1h)}</span>${x.pegang?` · vs rata ${pct(x.pos)}`:""}</div></div>
   </div></div>`;
 }
+const hariIniWIB = () => new Date(Date.now() + 7*36e5).toISOString().slice(0,10);
+function spikeHariIni(L){
+  const I = D.intraday; if (!I || I.tanggal !== hariIniWIB()) return "";
+  const T = I.titik || {}, urut = ["pagi","siang","tutup"], nama = {pagi:"Pembukaan", siang:"Setelah istirahat", tutup:"Penutupan"};
+  const akhir = urut.filter(t => T[t]).pop();
+  const strip = `<div class="titik">${urut.map(t => `<span class="${T[t]?"on":""}">${T[t]?"✓":"○"} ${nama[t]}${T[t]?" "+T[t].jam_data.replace(":","."):""}</span>`).join("")}</div>
+    <div class="mute kecil" style="margin:4px">Data per ${T[akhir].jam_data.replace(":",".")} · robot jalan ${T[akhir].dijalankan.replace(":",".")} WIB · ambang 3%</div>`;
+  const peg = k => (L.find(x => x.kode === k) || {}).pegang ? 1 : 0;
+  const S = Object.entries(I.status || {}).map(([k,v]) => ({k, ...v})).sort((a,b) => ({Terkonfirmasi:0,Muncul:1,Pudar:2}[a.status] - {Terkonfirmasi:0,Muncul:1,Pudar:2}[b.status]) || peg(b.k) - peg(a.k));
+  const isi = S.length ? S.map(x => `<div class="card" onclick="detail('${x.k}')" style="${x.status==="Pudar"?"opacity:.7":""}"><div class="row"><span class="kode">${x.k}</span><span class="${x.arah==="naik"?"naik":"turun"}" style="font-weight:700">${x.arah==="naik"?"▲":"▼"}</span><span class="st st-${x.status}">${x.status}</span>${peg(x.k)?"":`<span class="mute kecil">pantauan</span>`}</div><ul class="ev">${x.catatan.map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>`).join("")
+    : `<div class="card mute">Belum ada spike ≥3% hari ini.</div>`;
+  return `<h2>Spike hari ini</h2>${strip}${isi}`;
+}
 function hariIni(L){
   const brBaru = (D.berita?.berita || []).filter(b => hariLalu(b.tanggal) <= 4);
   const ev = L.map(x => {
@@ -130,9 +145,10 @@ function hariIni(L){
     brBaru.filter(b => b.kode === x.kode).forEach(b => it.push(`Berita ${b.dampak}: ${b.judul}`));
     return {x, it: [...new Set(it)]};
   }).filter(e => e.it.length).sort((a,b) => (b.x.pegang - a.x.pegang) || ({merah:0,hijau:1,kuning:2}[a.x.lampu] - {merah:0,hijau:1,kuning:2}[b.x.lampu]));
-  if (!ev.length) return `<div class="ok"><b>✅</b><h3>Aman</h3><div class="mute">Tidak ada yang perlu dilihat hari ini.</div></div>`;
+  const sp = spikeHariIni(L);
+  if (!ev.length) return sp + `<div class="ok"><b>✅</b><h3>Aman</h3><div class="mute">Tidak ada perubahan lain sejak penutupan sebelumnya.</div></div>`;
   const blok = (judul, arr) => arr.length ? `<h2>${judul}</h2>` + arr.map(e => `<div class="card" onclick="detail('${e.x.kode}')"><div class="row"><span class="lampu ${e.x.lampu}"></span><span class="kode">${e.x.kode}</span><span class="kanan mute">${rp(e.x.harga)} <span class="${e.x.ubah_1h>=0?'naik':'turun'}">${pct(e.x.ubah_1h)}</span></span></div><ul class="ev">${e.it.map(t => `<li>${esc(t)}</li>`).join("")}</ul></div>`).join("") : "";
-  return blok("Yang kamu pegang", ev.filter(e => e.x.pegang)) + blok(RATA ? "Pantauan" : "Emiten", ev.filter(e => !e.x.pegang));
+  return sp + (sp ? `<h2 style="margin-top:22px">Penutupan ${esc(D.sinyal?.meta?.tanggal_harga||"")}</h2>` : "") + blok("Yang kamu pegang", ev.filter(e => e.x.pegang)) + blok(RATA ? "Pantauan" : "Emiten", ev.filter(e => !e.x.pegang));
 }
 function porto(L){
   const urut = a => a.sort((p,q) => ({merah:0,hijau:1,kuning:2}[p.lampu] - {merah:0,hijau:1,kuning:2}[q.lampu]) || p.kode.localeCompare(q.kode));
@@ -182,6 +198,8 @@ async function detail(k){
     </div>
     ${x.narasi ? `<h2>Narasi</h2><div class="card">${esc(x.narasi)}</div>` : ""}
     <h2>Berita</h2>${br.length ? br.map(b => `<div class="card"><div class="row"><span class="b-${b.dampak}">${b.dampak}</span><span class="kanan mute">${b.tanggal}</span></div><div>${esc(b.judul)}</div><div class="mute kecil">${esc(b.sumber)}${b.url?` · <a href="${esc(b.url)}" target="_blank" rel="noopener">buka</a>`:""}</div></div>`).join("") : `<div class="card mute">Tidak ada berita yang masih berlaku.</div>`}
+    ${(() => { const I = D.intraday, st = I && I.tanggal === hariIniWIB() && I.status?.[x.kode]; return st ? `<h2>Spike hari ini</h2><div class="card"><div class="row"><span class="${st.arah==="naik"?"naik":"turun"}" style="font-weight:700">${st.arah==="naik"?"▲ naik":"▼ turun"}</span><span class="st st-${st.status}">${st.status}</span></div><ul class="ev">${st.catatan.map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>` : ""; })()}
+    ${x.rapor_spike ? `<h2>Rapor spike ≥3% (1 tahun)</h2><div class="card"><table class="tabel kecil"><tr class="mute"><td></td><td>Kali</td><td>Bertahan</td><td>Setengah</td><td>Pudar</td></tr>${["naik","turun"].map(a => { const r = x.rapor_spike[a]; const p = v => r[0] ? Math.round(v/r[0]*100)+"%" : "–"; return `<tr><td class="${a==="naik"?"naik":"turun"}">${a==="naik"?"▲ Naik":"▼ Turun"}</td><td>${r[0]}x</td><td>${p(r[1])}</td><td>${p(r[2])}</td><td>${p(r[3])}</td></tr>`; }).join("")}</table><div class="mute kecil">Hari yang sempat bergerak ≥3% dari penutupan kemarin, lalu ditutup: bertahan (masih ≥3%), setengah, atau pudar (≤1,5%). Kalau "Pudar" tinggi, spike di emiten ini sering palsu.</div></div>` : ""}
     <h2>Rapor sinyal grafik (1 tahun)</h2><div class="card">${rap}</div>
     <div class="mute kecil" style="margin:12px 4px">Data penutupan ${x.tanggal}. Alat pantau, bukan saran beli atau jual.</div>`;
   el.innerHTML = isi(`<span class="mute">Memuat…</span>`); el.classList.add("buka"); el.scrollTop = 0;
@@ -257,6 +275,7 @@ async function muat(){
     const [sinyal, harga, berita, emiten] = await Promise.all(["sinyal.json","harga.json","berita.json","emiten.json"].map(ambil));
     D = {sinyal, harga, berita, emiten};
     try { D.judul = await ambil("judul.json"); } catch(e) {}
+    try { D.intraday = await ambil("intraday.json"); } catch(e) {}
     try { D.rahasia = await ambil("rahasia.json"); } catch(e) {}
     RIW = null;
   } catch(e) { $("#app").innerHTML = `<div class="ok"><b>⚠️</b>Gagal memuat data. Periksa internet lalu buka lagi.</div>`; return; }
